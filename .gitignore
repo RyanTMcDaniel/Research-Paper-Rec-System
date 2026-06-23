@@ -216,3 +216,24 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# secrets
+.env
+*.env
+**/secrets.py
+
+# data / embeddings (huge, don't belong in git)
+*.parquet
+*.npy
+*.faiss
+data/raw/
+data/processed/
+
+# model checkpoints
+*.pt
+*.ckpt
+checkpoints/
+
+# os/editor junk
+.DS_Store
+.vscode/
