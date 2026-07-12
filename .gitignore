@@ -228,6 +228,11 @@ __marimo__/
 *.faiss
 data/raw/
 data/processed/
+data/citations/
+data/raw_expansion/
+data/training_data/
+seen_ids.txt
+checkpoint.json
 
 # model checkpoints
 *.pt
