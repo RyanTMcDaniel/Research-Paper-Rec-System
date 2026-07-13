@@ -26,7 +26,7 @@ Every number in this document comes from one checkpoint and one training run.
 | Experiment scripts | `scripts/eval/` |
 
 That checkpoint is what every script in `scripts/eval/` loads. It came from the
-normalized + field-aware-hard-negative run: 4 epochs, early stopping fired.
+normalized + chain-guarded-hard-negative run: 4 epochs, early stopping fired.
 `results/legacy/` holds two earlier random-negative runs, which are superseded and
 produced nothing in this document. If you are reading a training curve from one of
 those, you are reading the wrong model.
@@ -68,7 +68,10 @@ want to accept the expensive conclusion until the cheap ones were dead.
 checkpoint against a randomly-initialized model of identical architecture, on the
 same test users, same geometry.
 
-**Result.** 0.0143 vs 0.0001. A factor of 143.
+**Result.** 0.0143 vs 0.0001. The random-init figure is roughly one hit across
+three seeds and 3,000 users — a denominator too noisy to support a precise
+multiplier. The supportable claim is simpler: random-init retrieval is
+approximately zero, and the trained model is not.
 
 **Verdict.** Training worked. The model learned something substantial relative to
 its own initialization. Eliminated.
@@ -227,14 +230,18 @@ Mean-pool beats the tower by roughly 2x at every input level, on Recall@10,
 NDCG@10, and Recall@100. Both improve monotonically with more seed papers. The
 gap stays roughly constant. The tower never catches up.
 
-**The sharper version.** The trained tower loses to the popularity floor at 1 and
-2 inputs. It performs worse than recommending the same most-cited papers to every
-user, regardless of who they are. Seed-paper mean-pool is the only method that
-clears the floor at all input levels, at roughly 1.4 to 1.7 times over it.
+**The sharper version.** On Recall@10 the trained tower never beats the
+popularity floor at any input level: 0.0084, 0.0095, 0.0125, 0.0122 against a
+floor of 0.0125 — below at 1, 2, and 4 inputs, a tie at 3. On Recall@100 it
+clears the floor from 2 inputs onward but loses at 1 (0.0384 vs 0.0391). A
+system reading the user's own chosen papers performs at or below one that
+recommends the same most-cited list to everyone. Seed-paper mean-pool is the
+only method that clears the floor at every input level, at roughly 1.4 to 2x
+over it.
 
 That is the central inductive-bias finding at its most extreme: in the
 shortest-sequence regime, the learned encoder isn't merely worse than an average,
-it's worse than not looking at the user at all.
+it's no better than not looking at the user at all.
 
 **Verdict.** The finding replicates where sequences are maximally short. Third
 independent confirmation of one thesis (main eval, length stratification, cold
@@ -265,16 +272,19 @@ and 0.0391.
 
 Read naively, 0.0002 looks like a bug. It isn't. The mechanism is geometric: the
 Computer Science centroid sits at **cosine 0.9998 to the mean of the entire
-corpus.** Because the corpus is roughly 85% CS, the CS centroid and the corpus
-mean are the same vector for retrieval purposes. A user who selects "Computer
+corpus.** 94% of the corpus carries a CS tag (74% has CS as its primary field),
+so the CS centroid — the mean of all CS-tagged papers — is averaging nearly the
+whole corpus, and it lands on the corpus mean. For retrieval purposes they are
+the same vector. A user who selects "Computer
 Science" moves the query point essentially nowhere, and nearest-neighbor search
 from the center of the space returns whatever happens to be closest to the
 center, which is a geometric accident rather than a recommendation.
 
 The honest framing is that category signal is directionally valid but far too
-coarse for specific-paper retrieval: roughly 6x better than random at top-100,
-near-zero at top-10. It carries some information. Not enough to beat a baseline
-that ignores the user entirely.
+coarse for specific-paper retrieval: roughly 3x better than random at top-100
+(0.0012 against a random baseline of 100/253,703 ≈ 0.0004) and roughly 5x at
+top-10 (0.0002 against ≈ 0.00004). It carries some information. Not enough to
+beat a baseline that ignores the user entirely.
 
 This is the same geometry as the popularity-bias audit, surfacing a second time.
 The center of the embedding space is crowded and over-retrieved, which is why
@@ -304,7 +314,8 @@ a real opportunity to diagnose overfitting on data whose correlation structure I
 had built myself and therefore understood.
 
 **Split discipline.** Temporal split assigned at the co-citation-chain level, not
-the example level. Verified: 0 chains span splits. Without this, overlapping
+the example level. Verified against the shipped artifact by
+`scripts/tests/check_split_integrity.py`: 106,497 chains, 0 span splits. Without this, overlapping
 windows from a single chain could straddle train and test, and any train/val gap I
 measured would be leakage rather than overfitting.
 

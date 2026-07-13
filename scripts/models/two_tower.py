@@ -341,5 +341,5 @@ if __name__ == "__main__":
     print("\nTraining complete.")
     print(f"Best val loss: {best_val_loss:.4f}")
     print(f"Best checkpoint: {best_ckpt_path}")
-    pd.DataFrame(history_log).to_csv(os.path.join(OUT_DIR, 'training_log.csv'), index=False)
-    print(f"Per-epoch log saved to {os.path.join(OUT_DIR, 'training_log.csv')}")
+    pd.DataFrame(history_log).to_csv(os.path.join(OUT_DIR, 'training_log_hardneg.csv'), index=False)
+    print(f"Per-epoch log saved to {os.path.join(OUT_DIR, 'training_log_hardneg.csv')}")

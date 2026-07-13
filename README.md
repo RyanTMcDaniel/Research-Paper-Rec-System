@@ -2,8 +2,8 @@
 
 Two-tower semantic recommender over a 253K-paper (CS-focused) corpus.
 Frozen SciBERT paper encoder, self-attention user-history encoder, 256-d
-shared space, triplet loss with field-aware hard negatives, FAISS retrieval
-at ~4ms/query.
+shared space, triplet loss with chain-guarded in-batch hard negatives,
+flat-FAISS retrieval.
 
 Benchmarked against popularity, random, and mean-pool baselines. The
 mean-pool baseline won, and the investigation into why is the core result.
@@ -14,10 +14,22 @@ See [ABLATION.md](ABLATION.md).
 ## Quickstart
 
 ```bash
-[install]
-[env: S2_API_KEY]
-[run eval]
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+# Smoke-test the model definitions (downloads SciBERT, ~400MB):
+python scripts/tests/test_two_tower.py
 ```
+
+**What a clone can and cannot run.** The data artifacts (238MB corpus, 327MB
+embedding cache, 248MB FAISS index, 225MB histories) and the trained
+checkpoint (`*.pt`) are gitignored — they are not in this repo. That means
+**no script in `scripts/eval/` runs from a clean clone.** To reproduce the
+artifacts from scratch: `export S2_API_KEY=...` (free from Semantic Scholar),
+then run the `scripts/data_collection/` pipeline in the order listed in Repo
+Structure below (multi-day, API-rate-limited), with the two GPU steps
+(`build_embedding_cache.py`, `two_tower.py`) run on Kaggle. The eval scripts
+then run locally on CPU.
 
 **Note on reproducibility.** Neither the embedding-cache projection nor the
 training run persisted its RNG state, so the pipeline produces a consistent
@@ -27,11 +39,34 @@ the thing that generated it. The gap only surfaces when embedding new text,
 where a re-instantiated encoder yields vectors of correct shape and norm in
 a different random space, so it fails the sanity check by passing it.
 
+The same gap made provenance harder than it should have been: by write-up
+time I could not tell from filenames which of three training logs belonged
+to the shipped checkpoint, and identified it by its loss-scale signature and
+a direct tensor comparison between `best.pt` and `last.pt`. The forensics
+are in [ABLATION.md](ABLATION.md#a-note-on-artifact-provenance).
+
 ---
 
 ## Architecture
 
-[DIAGRAM: mermaid or excalidraw. Paper tower / user tower to 256-d to FAISS.]
+```mermaid
+flowchart TB
+    subgraph P ["Paper tower (frozen)"]
+        A["title + abstract"] --> B["SciBERT, frozen"]
+        B --> C["mean-pool hidden states"]
+        C --> D["linear 768 → 256"]
+    end
+    subgraph U ["User tower (trained)"]
+        E["history: 3–5 paper embeddings"] --> F["multi-head self-attention"]
+        F --> G["masked mean-pool"]
+        G --> H["linear 256 → 256"]
+    end
+    D --> N1["L2 normalize"]
+    H --> N2["L2 normalize"]
+    N1 --> S["shared 256-d unit sphere"]
+    N2 --> S
+    S --> R["retrieval: flat-L2 FAISS (serving) · torch cdist (eval)"]
+```
 
 **Paper tower.** Frozen SciBERT (`allenai/scibert_scivocab_uncased`),
 title + abstract, mean-pooled hidden states, linear projection to 256-d.
@@ -51,8 +86,8 @@ contest that assumption.
 The hypothesis was wrong. The six-experiment investigation into why is in
 [ABLATION.md](ABLATION.md).
 
-**Training.** Triplet loss, with negatives drawn as same-field,
-different-chain in-batch samples.
+**Training.** Triplet loss, with in-batch negatives drawn from different
+co-citation chains — same-field in effect, by corpus composition (below).
 
 *Why hard negatives:* with random in-batch negatives the triplet task is
 trivially satisfiable. Telling a user's ML paper apart from a random Medicine
@@ -60,17 +95,23 @@ paper only requires coarse topical separation, which frozen SciBERT already
 provides for free, so the loss falls without the user tower learning anything
 discriminative. I observed this rather than assumed it: training loss dropped
 steadily while retrieval still lost to mean-pool, which is the signature of an
-objective being satisfied without the actual task getting easier. Switching to
-same-field negatives forces CS-paper-vs-CS-paper discrimination. It was cheap
-to implement because the corpus is ~85% CS, so same-field candidates are dense
-in any given batch.
+objective being satisfied without the actual task getting easier. Harder
+negatives force CS-paper-vs-CS-paper discrimination. The sampler enforces
+different-chain, not same-field — no field check needed, because 94% of the
+corpus carries a CS tag (74% CS by primary field), so an in-batch negative is
+a same-field paper roughly nine times out of ten by composition alone.
 
 Hard negatives did not fix the model. It still lost to mean-pool afterward
 (0.0143 vs 0.0210). That is not a failure of the technique, it is one more
 ruled-out explanation, and it is why the ablation was necessary.
 
 **Serving.** Flat L2 FAISS index over 253,703 embeddings. Exact search,
-~3.8ms/query. IVF deferred as unnecessary at this scale.
+measured at 2.4ms mean / 2.5ms p95 per single query (k=10, 100 queries,
+Apple Silicon CPU). IVF deferred as unnecessary at this scale. Note: none of
+the numbers in Results go through FAISS — every eval script searches in plain
+torch, because torch and FAISS can't share a process on this platform (see
+Engineering Notes). FAISS latency is a serving property, not part of any
+reported metric.
 
 ---
 
@@ -79,7 +120,8 @@ ruled-out explanation, and it is why the ablation was necessary.
 Synthetic user histories built from co-citation structure: papers cited
 together are treated as papers read together.
 
-**Corpus.** Semantic Scholar bulk API, 253,703 papers, ~85% Computer Science.
+**Corpus.** Semantic Scholar bulk API, 253,703 papers. 74% Computer Science
+by primary field; 94% carry a CS tag somewhere in the multi-label field list.
 
 **Histories.** Sliding windows, 3 to 5 papers, deliberately overlapping and
 correlated. This was a design choice, not a data accident. Sliding windows
@@ -92,8 +134,9 @@ and short sequences turned out to be the exact regime where the architecture
 fails. That tension is discussed in [ABLATION.md](ABLATION.md).
 
 **Splits.** Temporal, by the held-out positive's publication year, applied at
-the co-citation-chain level rather than the example level. Verified: 0 chains
-span splits. Splitting at the example level would have leaked badly, because
+the co-citation-chain level rather than the example level. Verified against
+the shipped artifact (`scripts/tests/check_split_integrity.py`): 106,497
+chains, 0 span splits. Splitting at the example level would have leaked badly, because
 overlapping windows from a single chain share history papers, so a train
 example and a test example could differ by one paper and the model would score
 well by recall rather than generalization.
@@ -111,8 +154,10 @@ well by recall rather than generalization.
 | Popularity | 0.0075 | 0.0038 |
 | Random | 0.0000 | 0.0000 |
 
-The trained model beats popularity and random, and beats a random-init
-version of itself by 143x, so the pipeline works. It loses to mean-pooling.
+The trained model beats popularity and random, and a random-init version of
+itself scores approximately zero (0.0001 — roughly one hit across three seeds
+and 3,000 users) against its 0.0143, so the pipeline works. It loses to
+mean-pooling.
 
 The model is roughly 60% of the baseline's Recall@10, and the baseline has no
 parameters. The gap is not a rounding error and it did not close with better
@@ -136,10 +181,14 @@ interest).
 | Category selection | ~0.0002 | ~0.0012 |
 | Popularity floor | 0.0125 | 0.0391 |
 
+![Cold-start convergence: seed-paper vs category signal across input levels, with popularity floor](figures/coldstart_convergence.png)
+
 **The central result replicates.** Mean-pool beats the attention tower ~2x at
 every input level, on Recall@10, NDCG@10, and Recall@100. Third independent
 confirmation of the same finding, this time in the regime where sequences are
-maximally short.
+maximally short. Sharper still: on Recall@10 the trained tower never beats the
+popularity floor at any input level — below it at 1, 2, and 4 inputs, tied at
+3. Only seed-paper mean-pool clears the floor everywhere.
 
 **Category selection falls below the popularity floor.** This is the more
 interesting half. Selecting "Computer Science" as an interest and receiving
@@ -147,8 +196,9 @@ recommendations from the CS centroid performs worse than recommending the most
 cited papers to everyone, regardless of who they are.
 
 The mechanism is geometric. The Computer Science centroid sits at cosine 0.9998
-to the mean of the entire corpus. Because the corpus is ~85% CS, the CS centroid
-and the corpus mean are, for retrieval purposes, the same vector. So when a user
+to the mean of the entire corpus. 94% of the corpus carries a CS tag, so the CS
+centroid — the mean of all CS-tagged papers — averages nearly the whole corpus,
+and for retrieval purposes it and the corpus mean are the same vector. So when a user
 tells the system "I'm interested in Computer Science," the query point moves
 essentially nowhere. Nearest-neighbor search from the corpus mean returns
 whatever happens to sit closest to the center of the embedding space, which is
@@ -171,7 +221,8 @@ without measuring the geometry.
 
 **Linear probe.** Logistic regression on frozen paper embeddings to predict
 field-of-study: 78.4% raw accuracy, 24.8% balanced accuracy. The gap is the
-finding. The headline number is inflated by the 85% CS class imbalance.
+finding. The headline number is inflated by class imbalance: 74% of labeled
+papers are CS, and the probe's own majority-class baseline is 74.5%.
 Well-represented fields (Medicine, Physics, Materials Science, Math) separate
 at multiple times chance; tail fields degrade, confounded with data scarcity
 rather than cleanly an embedding failure. Conclusion: the paper embeddings are
@@ -238,9 +289,13 @@ at that point was consistent with a model that was learning. A training curve
 alone cannot tell you your embeddings landed somewhere useful.
 
 **Silent null column.** `positive_primary_field` was 100% null across all 5.03M
-rows. The column existed by name and had been trained on for days. Recovered by
-parsing the corpus's nested `s2FieldsOfStudy` array-of-dicts, extracting a primary
-field, and joining on `paperId`. Validated: 0 nulls, 0 "Unknown" across 5.03M rows.
+rows — the column existed by name and had been trained past for days. The fix was
+not to repair the column: it is still null in `histories.parquet` today, because
+nothing downstream reads it. Instead I parsed the corpus's nested
+`s2FieldsOfStudy` array-of-dicts into a flat side table,
+`paper_categories.parquet` (`paperId` → list of category strings), which
+`cold_start_eval.py` joins against at eval time. Validated against the shipped
+artifact: 253,703 rows, 0 nulls, 0 empty lists, covering every corpus paper.
 
 What would have caught it: a schema assertion at the pipeline boundary. A single
 non-null check on every generated column at write time turns a week-long silent
@@ -286,7 +341,7 @@ Builds the corpus and the synthetic training data.
 | Script | What it does |
 |---|---|
 | `two_tower.py` | **[Kaggle/GPU]** The real training entrypoint. Contains `PaperEncoder`, `UserHistoryEncoder`, the chain-aware `CachedTripletDataset` with same-chain-guarded negative sampling, and the training loop. Produces `user_history_encoder_best.pt`. |
-| `user_history_encoder_best.pt` | The trained checkpoint every eval script loads. Every number in this repo comes from this file. |
+| `user_history_encoder_best.pt` | The trained checkpoint every eval script loads. Every number in this repo comes from this file. **Gitignored — not in the repo.** A clone must retrain to obtain it (see Quickstart). |
 
 ### `scripts/retrieval/`
 
@@ -341,11 +396,13 @@ to give attention a fair shot, longer histories would have been the right call.
 I'd now separate the two goals into two runs instead of asking one dataset to
 serve both.
 
-**Say "CS-focused," not "scientific."** The corpus is ~85% Computer Science. Most
-of the interesting geometric findings here (the 0.9998 centroid, the balanced-
-accuracy gap) are downstream of that imbalance, and describing the corpus as
-broadly scientific would misrepresent both the system and the results.
+**Say "CS-focused," not "scientific."** The corpus is 74% Computer Science by
+primary field and 94% CS-tagged. Most of the interesting geometric findings here
+(the 0.9998 centroid, the balanced-accuracy gap) are downstream of that
+imbalance, and describing the corpus as broadly scientific would misrepresent
+both the system and the results.
 
-** Download Kaggle outputs immediately, and name them for the config that produced 
-them. I spent an evening proving by tensor comparison which of my own training runs 
-had produced my own model. This is a solvable problem, and the solution is a filename.
+**Download Kaggle outputs immediately, and name them for the config that
+produced them.** I spent an evening proving by tensor comparison which of my own
+training runs had produced my own model. This is a solvable problem, and the
+solution is a filename.
