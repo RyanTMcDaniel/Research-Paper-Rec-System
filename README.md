@@ -1,53 +1,42 @@
 # Research Paper Recommender
 
-Two-tower semantic recommender over a 253K-paper (CS-focused) corpus.
-Frozen SciBERT paper encoder, self-attention user-history encoder, 256-d
-shared space, triplet loss with chain-guarded in-batch hard negatives,
-flat-FAISS retrieval.
+**A no-parameter baseline beat my trained model, and the investigation into why
+is the deliverable.** I built a two-tower recommender — frozen SciBERT paper
+encoder, self-attention user-history encoder — and a plain mean of the same
+embeddings, with zero learned parameters, out-retrieved it by a wide margin.
+Rather than tune the number up, I ran a six-experiment ablation to prove the
+cause: on short, topically-uniform histories, attention is the wrong inductive
+bias, and it gets *worse* the more history you give it.
 
-Benchmarked against popularity, random, and mean-pool baselines. The
-mean-pool baseline won, and the investigation into why is the core result.
-See [ABLATION.md](ABLATION.md).
+## Result: the baseline won
 
----
+| Method | Recall@10 | NDCG@10 |
+|---|---|---|
+| Self-attention (this model) | 0.0140 | 0.0074 |
+| **Mean-pool baseline** | **0.0225** | **0.0113** |
+| Popularity | 0.0075 | 0.0038 |
+| Random | 0.0000 | 0.0000 |
 
-## Quickstart
+<sub>Source: `scripts/eval/evaluate.py`, 2,000 test users (random subsample, seed 42).</sub>
 
-```bash
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
+The trained model beats popularity and random — the pipeline works — and loses
+to a parameter-free average by ~40% on Recall@10.
 
-# Smoke-test the model definitions (downloads SciBERT, ~400MB):
-python scripts/tests/test_two_tower.py
-```
+## The sharpest evidence: attention is destructive, not underfed
 
-**What a clone can and cannot run.** The data artifacts (238MB corpus, 327MB
-embedding cache, 248MB FAISS index, 225MB histories) and the trained
-checkpoint (`*.pt`) are gitignored — they are not in this repo. That means
-**no script in `scripts/eval/` runs from a clean clone.** To reproduce the
-artifacts from scratch: `export S2_API_KEY=...` (free from Semantic Scholar),
-then run the `scripts/data_collection/` pipeline in the order listed in Repo
-Structure below (multi-day, API-rate-limited), with the two GPU steps
-(`build_embedding_cache.py`, `two_tower.py`) run on Kaggle. The eval scripts
-then run locally on CPU.
+![Model vs mean-pool Recall@10 by history length: the gap widens as histories grow](figures/histlen_gap.png)
 
-**Note on reproducibility.** Neither the embedding-cache projection nor the
-training run persisted its RNG state, so the pipeline produces a consistent
-set of artifacts but isn't bit-reproducible. Two instances of the same class
-of gap: anything that generates a downstream-anchored artifact should save
-the thing that generated it. The gap only surfaces when embedding new text,
-where a re-instantiated encoder yields vectors of correct shape and norm in
-a different random space, so it fails the sanity check by passing it.
-
-The same gap made provenance harder than it should have been: by write-up
-time I could not tell from filenames which of three training logs belonged
-to the shipped checkpoint, and identified it by its loss-scale signature and
-a direct tensor comparison between `best.pt` and `last.pt`. The forensics
-are in [ABLATION.md](ABLATION.md#a-note-on-artifact-provenance).
+The obvious defense is that attention was *starved* — 3-to-5 paper histories are
+short, so of course a learned weighting can't beat an average; give it more
+sequence and it would catch up. That prediction is testable: if it were true,
+the gap should **narrow** as histories get longer. It does the opposite. Every
+additional paper makes mean-pool better and the model relatively worse — the
+gap widens. Attention isn't underfed; it's spending signal a plain average
+absorbs cleanly. Full six-experiment trail in **[ABLATION.md](ABLATION.md)**.
 
 ---
 
-## Architecture
+## Architecture: the hypothesis under test
 
 ```mermaid
 flowchart TB
@@ -108,14 +97,14 @@ ruled-out explanation, and it is why the ablation was necessary.
 **Serving.** Flat L2 FAISS index over 253,703 embeddings. Exact search,
 measured at 2.4ms mean / 2.5ms p95 per single query (k=10, 100 queries,
 Apple Silicon CPU). IVF deferred as unnecessary at this scale. Note: none of
-the numbers in Results go through FAISS — every eval script searches in plain
+the reported numbers go through FAISS — every eval script searches in plain
 torch, because torch and FAISS can't share a process on this platform (see
 Engineering Notes). FAISS latency is a serving property, not part of any
 reported metric.
 
 ---
 
-## Data
+## Data: histories built to overfit on purpose
 
 Synthetic user histories built from co-citation structure: papers cited
 together are treated as papers read together.
@@ -145,41 +134,29 @@ well by recall rather than generalization.
 
 ---
 
-## Results
-
-| Method | Recall@10 | NDCG@10 |
-|---|---|---|
-| Self-attention (this model) | 0.0140 | 0.0074 |
-| **Mean-pool baseline** | **0.0225** | **0.0113** |
-| Popularity | 0.0075 | 0.0038 |
-| Random | 0.0000 | 0.0000 |
-
-<sub>Source: `scripts/eval/evaluate.py`, 2,000 test users (random subsample, seed 42).</sub>
-
-**On the two number pairs in these docs.** The main benchmark above and the
-diagnostic scripts in `scripts/eval/` draw different-sized random subsamples of
-the test set — 2,000 users here, 3,000 in the ablation experiments (see
-ABLATION.md) — so the same model-vs-mean-pool comparison surfaces as 0.0140 /
-0.0225 in this table and 0.0143 / 0.0210 in the ablation. Those small
-differences are sampling variation, not disagreement. The finding is invariant
-to it: mean-pool wins by a wide margin at every sample size. Each table names
-the script and sample size it came from.
-
-The trained model beats popularity and random, and a random-init version of
-itself scores approximately zero (0.0001 — roughly one hit across three seeds
-and 3,000 users) against its 0.0143, so the pipeline works. It loses to
-mean-pooling.
+## The gap is real, not a bug or noise
 
 The model is roughly 60% of the baseline's Recall@10, and the baseline has no
-parameters. The gap is not a rounding error and it did not close with better
-negatives, normalized geometry, or a longer training run. The honest reading is
-that the learned encoder is worse than an average for this task, and the useful
-question is not how to shrink the gap but what the gap is telling me. That is
-what the ablation is for.
+parameters. A random-init version of the same architecture scores approximately
+zero (0.0001 — roughly one hit across three seeds and 3,000 users) against the
+trained model's 0.0143, so the model did learn; it just learned something worse
+than averaging. The gap is not a rounding error and it did not close with better
+negatives, normalized geometry, or a longer training run. The useful question is
+not how to shrink the gap but what it's telling me. That is what the ablation is
+for.
+
+**On the two number pairs in these docs.** The main benchmark (table up top) and
+the diagnostic scripts in `scripts/eval/` draw different-sized random subsamples
+of the test set — 2,000 users for the benchmark, 3,000 in the ablation
+experiments (see ABLATION.md) — so the same model-vs-mean-pool comparison
+surfaces as 0.0140 / 0.0225 and 0.0143 / 0.0210. Those small differences are
+sampling variation, not disagreement. The finding is invariant to it: mean-pool
+wins by a wide margin at every sample size. Each table names the script and
+sample size it came from.
 
 ---
 
-## Cold Start
+## The finding replicates: cold start
 
 Two cold-start signals benchmarked across 10,000 users: **seed papers** (user
 names 1 to 4 papers) versus **category selection** (user names fields of
@@ -230,7 +207,7 @@ without measuring the geometry.
 
 ---
 
-## Interpretability
+## The failure is the user tower, not the embeddings
 
 **Linear probe.** Logistic regression on frozen paper embeddings to predict
 field-of-study: 78.4% raw accuracy, 24.8% balanced accuracy. The gap is the
@@ -330,6 +307,42 @@ so the pipeline depends on a field that behaves rather than a param that doesn't
 
 ---
 
+## Running it & reproducibility
+
+```bash
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+# Smoke-test the model definitions (downloads SciBERT, ~400MB):
+python scripts/tests/test_two_tower.py
+```
+
+**What a clone can and cannot run.** The data artifacts (238MB corpus, 327MB
+embedding cache, 248MB FAISS index, 225MB histories) and the trained
+checkpoint (`*.pt`) are gitignored — they are not in this repo. That means
+**no script in `scripts/eval/` runs from a clean clone.** To reproduce the
+artifacts from scratch: `export S2_API_KEY=...` (free from Semantic Scholar),
+then run the `scripts/data_collection/` pipeline in the order listed in Repo
+Structure below (multi-day, API-rate-limited), with the two GPU steps
+(`build_embedding_cache.py`, `two_tower.py`) run on Kaggle. The eval scripts
+then run locally on CPU.
+
+**Note on reproducibility.** Neither the embedding-cache projection nor the
+training run persisted its RNG state, so the pipeline produces a consistent
+set of artifacts but isn't bit-reproducible. Two instances of the same class
+of gap: anything that generates a downstream-anchored artifact should save
+the thing that generated it. The gap only surfaces when embedding new text,
+where a re-instantiated encoder yields vectors of correct shape and norm in
+a different random space, so it fails the sanity check by passing it.
+
+The same gap made provenance harder than it should have been: by write-up
+time I could not tell from filenames which of three training logs belonged
+to the shipped checkpoint, and identified it by its loss-scale signature and
+a direct tensor comparison between `best.pt` and `last.pt`. The forensics
+are in [ABLATION.md](ABLATION.md#a-note-on-artifact-provenance).
+
+---
+
 ## Repo Structure
 
 **Where to look first.** The result this project is about lives in
@@ -349,14 +362,14 @@ Builds the corpus and the synthetic training data.
 | `clean_expansion.py` | Same cleaning pipeline as `clean_data.py`, applied to expansion batches, appended to the corpus. |
 | `fetch_citations_incremental.py` | Citation fetch for the expansion delta only. |
 | `build_embedding_cache.py` | **[Kaggle/GPU]** Run frozen SciBERT over all 253K papers once, pickle a `{paperId → 256-d vector}` cache. This is the 250x speedup. |
-| `make_plots.py` | Regenerate the four writeup figures from hardcoded final-run numbers. Loads no data by design; the results are locked. |
+| `make_plots.py` | Regenerate the five writeup figures from hardcoded final-run numbers. Loads no data by design; the results are locked. |
 
 ### `scripts/models/`
 
 | Script | What it does |
 |---|---|
 | `two_tower.py` | **[Kaggle/GPU]** The real training entrypoint. Contains `PaperEncoder`, `UserHistoryEncoder`, the chain-aware `CachedTripletDataset` with chain-guarded negative sampling, and the training loop. Produces `user_history_encoder_best.pt`. |
-| `user_history_encoder_best.pt` | The trained checkpoint every eval script loads. Every number in this repo comes from this file. **Gitignored — not in the repo.** A clone must retrain to obtain it (see Quickstart). |
+| `user_history_encoder_best.pt` | The trained checkpoint every eval script loads. Every number in this repo comes from this file. **Gitignored — not in the repo.** A clone must retrain to obtain it (see Running it & reproducibility). |
 
 ### `scripts/retrieval/`
 

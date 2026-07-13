@@ -13,11 +13,12 @@ PROVENANCE (important — two training runs exist, don't mix them):
   * An earlier abandoned run (random negatives, val ~0.065 scale, 8 epochs, no
     early stop) is NOT the model behind any result here. Ignore it.
 
-Outputs 4 PNGs into figures/:
+Outputs 5 PNGs into figures/:
   1. coldstart_convergence.png  -- THE figure. 4 methods x input levels + popularity floor.
   2. training_curves.png        -- train falls / val RISES: genuine overfitting, early stop.
   3. popularity_bias.png        -- citation-quartile skew, model vs mean-pool vs corpus.
   4. main_eval.png              -- headline benchmark: model vs 3 baselines.
+  5. histlen_gap.png            -- model vs mean-pool R@10 by history length; gap widens.
 
 Style: clean-academic, readable on GitHub. Colours are SEMANTIC and consistent
 across every figure: blue = mean-pool (the winner), red = attention tower (the
@@ -252,9 +253,56 @@ def fig_main_eval():
     print("wrote main_eval.png")
 
 
+# =============================================================================
+# 5. HISTORY-LENGTH GAP  (Experiment 5 — the reversal)
+#    Per-bucket Recall@10 from eval_by_histlen.py, 4,000 test users.
+#    The naive "attention is starved" story predicts the gap NARROWS with length.
+#    It widens: gap_R = -0.0049 (len 3), -0.0053 (len 4), -0.0104 (len 5).
+# =============================================================================
+def fig_histlen_gap():
+    lengths  = [3, 4, 5]
+    meanpool = [0.0174, 0.0214, 0.0224]   # rises monotonically with more papers
+    model    = [0.0125, 0.0160, 0.0120]   # does not keep up
+    gaps     = [m - p for m, p in zip(model, meanpool)]  # -0.0049, -0.0054, -0.0104
+
+    fig, ax = plt.subplots(figsize=(8, 4.8))
+
+    # shaded deficit between the two curves
+    ax.fill_between(lengths, model, meanpool, color="#e8b4bb", alpha=0.45,
+                    label="Attention's deficit")
+    ax.plot(lengths, meanpool, "o-", color=C_MPOOL, lw=2.4, ms=8,
+            label="Mean-pool (no parameters)")
+    ax.plot(lengths, model, "s-", color=C_TOWER, lw=2.4, ms=8,
+            label="Self-attention model")
+
+    # annotate the widening gap at each length
+    for L, m, p, g in zip(lengths, model, meanpool, gaps):
+        ax.annotate(f"{g:+.4f}", xy=(L, (m + p) / 2), xytext=(8, 0),
+                    textcoords="offset points", va="center", fontsize=9,
+                    color=C_TOWER)
+
+    ax.set_xticks(lengths)
+    ax.set_xlabel("User history length (papers)")
+    ax.set_ylabel("Recall@10")
+    ax.set_title("Attention's deficit WIDENS with history length\n"
+                 "(the opposite of the 'attention is starved' prediction)")
+    ax.set_ylim(0, 0.026)
+    ax.legend(loc="upper left", fontsize=9)
+
+    fig.text(0.5, -0.02,
+             "Source: eval_by_histlen.py, 4,000 test users. Mean-pool improves "
+             "monotonically; the model does not keep up.",
+             ha="center", fontsize=8, color="#666666")
+    fig.tight_layout()
+    fig.savefig(f"{OUT_DIR}/histlen_gap.png", bbox_inches="tight")
+    plt.close(fig)
+    print("wrote histlen_gap.png")
+
+
 if __name__ == "__main__":
     fig_coldstart()
     fig_training_curves()
     fig_popularity_bias()
     fig_main_eval()
+    fig_histlen_gap()
     print(f"\nall figures -> ./{OUT_DIR}/")

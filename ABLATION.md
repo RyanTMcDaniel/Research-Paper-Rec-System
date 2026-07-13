@@ -13,6 +13,17 @@ adds variance without adding signal.
 Every more flattering explanation was tested and ruled out. What follows is the
 trail.
 
+**Jump to an experiment:**
+
+1. [Did training actually work?](#experiment-1-did-training-actually-work) — trained vs. random-init
+2. [Did attention collapse into mean-pool?](#experiment-2-did-attention-collapse-into-mean-pool) — attention-weight distribution
+3. [Is the projection layer the culprit?](#experiment-3-is-the-projection-layer-the-culprit) — component ablation
+4. [Is the eval searching the wrong space?](#experiment-4-is-the-eval-searching-the-wrong-space) — projected-space retrieval
+5. [**Length-stratified: the gap widens, not narrows**](#experiment-5-length-stratified-evaluation) — the sharpest result
+6. [Does it replicate in cold start?](#experiment-6-does-it-replicate-in-cold-start) — third confirmation
+
+Also: [the category arm](#the-category-arm-and-why-its-reported-separately) · [overfitting](#overfitting) · [artifact-provenance note](#a-note-on-artifact-provenance)
+
 ---
 
 ## Provenance
