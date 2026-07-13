@@ -31,6 +31,19 @@ normalized + chain-guarded-hard-negative run: 4 epochs, early stopping fired.
 produced nothing in this document. If you are reading a training curve from one of
 those, you are reading the wrong model.
 
+One caveat on that run label. The training code that produced this checkpoint
+lived in a Kaggle notebook that no longer exists; `scripts/models/two_tower.py`
+is the reconstructed equivalent, and its validation protocol does not exactly
+reproduce the logged val series (the shipped chain-guarded loss on the val split
+is ~0.10, not the logged ~0.31). So "normalized + chain-guarded" is inferred from
+what *is* verifiable against the artifacts — `best.pt` differs from `last.pt` by
+direct tensor comparison, the logged curve matches this run's early-stopping
+shape, and its ~0.31 loss scale is the signature that separates it from the
+legacy runs — rather than read from the source that generated it. This is the
+fourth instance of the same artifact-provenance gap this document keeps hitting:
+unpersisted cache weights, unseeded RNG, unnamed logs, and now the training
+notebook itself.
+
 I am stating this up front because reconstructing it was harder than it should
 have been. See [A note on artifact provenance](#a-note-on-artifact-provenance) at
 the bottom.
