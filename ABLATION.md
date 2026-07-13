@@ -234,6 +234,43 @@ Which is exactly what the stratification shows.
 
 ---
 
+### The obvious objection
+
+There's a circularity here and it needs stating before someone else states it. These
+histories are co-citation windows: papers cited together in the same reference list.
+That makes them topically tight by construction. And the explanation I just gave for
+why mean-pool wins is that the histories are topically tight, so a centroid is the
+right estimator. Which raises the fair question of whether I built a dataset where
+mean-pool was guaranteed to win and then went and discovered that mean-pool wins.
+
+Largely, yes. That's a real limit on what this result can claim. Attention exists to
+find structure inside a sequence, and specifically to separate the parts that matter
+from the parts that don't. My data generator produces sequences with no such
+separation to find. Every paper in a co-citation window is on-topic, because that's
+what a co-citation window is. So the model was handed a sequence with nothing to
+filter and asked to filter it, and it did the only thing available to it: invented a
+weighting where none was warranted. That adds variance and nothing else, which is
+exactly what the length stratification shows.
+
+Real reading histories are not like this. People read a paper because a colleague
+sent it, because they were reviewing it, because they needed one method from it,
+because it was 2am. Those are incidental, and down-weighting incidental items is the
+job attention was built for. My histories contain none, so attention was never
+actually given that job. Testing it properly would need either real interaction data
+or synthetic histories with noise papers deliberately injected. I have neither.
+
+So the honest scope: I did not disprove attention. I disproved attention on this
+data, and the construction of the data is part of why. What survives without
+qualification is everything the six experiments established about *this system* — that
+training worked, that attention didn't collapse, that the projection isn't broken,
+that the space isn't mismatched, and that the failure gets worse rather than better
+with more input. What doesn't survive is the general sentence. Not "attention loses
+to mean-pool on short histories," but "attention loses to mean-pool on short
+homogeneous histories, and mine were homogeneous by construction." That's a smaller
+claim. It's also the one I can actually defend.
+
+---
+
 ## Experiment 6: does it replicate in cold start?
 
 **Script.** `scripts/eval/cold_start_eval.py`. 10,000 users, seed-paper cold
