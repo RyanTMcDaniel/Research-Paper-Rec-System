@@ -154,6 +154,17 @@ well by recall rather than generalization.
 | Popularity | 0.0075 | 0.0038 |
 | Random | 0.0000 | 0.0000 |
 
+<sub>Source: `scripts/eval/evaluate.py`, 2,000 test users (random subsample, seed 42).</sub>
+
+**On the two number pairs in these docs.** The main benchmark above and the
+diagnostic scripts in `scripts/eval/` draw different-sized random subsamples of
+the test set — 2,000 users here, 3,000 in the ablation experiments (see
+ABLATION.md) — so the same model-vs-mean-pool comparison surfaces as 0.0140 /
+0.0225 in this table and 0.0143 / 0.0210 in the ablation. Those small
+differences are sampling variation, not disagreement. The finding is invariant
+to it: mean-pool wins by a wide margin at every sample size. Each table names
+the script and sample size it came from.
+
 The trained model beats popularity and random, and a random-init version of
 itself scores approximately zero (0.0001 — roughly one hit across three seeds
 and 3,000 users) against its 0.0143, so the pipeline works. It loses to
@@ -180,6 +191,8 @@ interest).
 | Seed papers, attention tower | 0.0122 | 0.0640 |
 | Category selection | ~0.0002 | ~0.0012 |
 | Popularity floor | 0.0125 | 0.0391 |
+
+<sub>Source: `scripts/eval/cold_start_eval.py`, 10,000 users (fixed cold-start population).</sub>
 
 ![Cold-start convergence: seed-paper vs category signal across input levels, with popularity floor](figures/coldstart_convergence.png)
 
@@ -236,6 +249,8 @@ top-10 recommendations across 2,000 test users.
 | Corpus baseline | 25.0% | 25.6% | 24.5% | 24.9% |
 | Attention model | 14.3% | 23.7% | 27.2% | 34.8% |
 | Mean-pool | 17.7% | 23.3% | 26.7% | 32.4% |
+
+<sub>Source: `scripts/eval/popularity_bias.py`, 2,000 test users.</sub>
 
 Both methods over-surface highly cited papers by a similar margin, so the bias
 originates in the embedding geometry rather than the architecture. Highly cited
@@ -340,7 +355,7 @@ Builds the corpus and the synthetic training data.
 
 | Script | What it does |
 |---|---|
-| `two_tower.py` | **[Kaggle/GPU]** The real training entrypoint. Contains `PaperEncoder`, `UserHistoryEncoder`, the chain-aware `CachedTripletDataset` with same-chain-guarded negative sampling, and the training loop. Produces `user_history_encoder_best.pt`. |
+| `two_tower.py` | **[Kaggle/GPU]** The real training entrypoint. Contains `PaperEncoder`, `UserHistoryEncoder`, the chain-aware `CachedTripletDataset` with chain-guarded negative sampling, and the training loop. Produces `user_history_encoder_best.pt`. |
 | `user_history_encoder_best.pt` | The trained checkpoint every eval script loads. Every number in this repo comes from this file. **Gitignored — not in the repo.** A clone must retrain to obtain it (see Quickstart). |
 
 ### `scripts/retrieval/`

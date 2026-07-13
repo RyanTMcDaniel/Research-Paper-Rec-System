@@ -31,6 +31,15 @@ normalized + chain-guarded-hard-negative run: 4 epochs, early stopping fired.
 produced nothing in this document. If you are reading a training curve from one of
 those, you are reading the wrong model.
 
+The checkpoint is single; the evaluation samples are not. Each script draws its
+own different-sized random subsample of the test set — `evaluate.py` 2,000 users,
+`diag_ablation.py` and `diag_trained_vs_rand.py` 3,000, `cold_start_eval.py`
+10,000 — so the same model-vs-mean-pool comparison appears as 0.0140 / 0.0225 in
+the main benchmark (the headline above) and 0.0143 / 0.0210 in the ablation
+experiments. That is sampling variation, not disagreement: the finding is
+invariant to it, mean-pool winning by a wide margin at every sample size. Each
+results table below names the script and sample size it came from.
+
 One caveat on that run label. The training code that produced this checkpoint
 lived in a Kaggle notebook that no longer exists; `scripts/models/two_tower.py`
 is the reconstructed equivalent, and its validation protocol does not exactly
@@ -130,6 +139,8 @@ trained weights, bypassing one component at a time.
 | no_projection | 0.0003 | 0.0001 |
 | no_attention | 0.0003 | 0.0001 |
 | mean-pool baseline | 0.0210 | 0.0108 |
+
+<sub>Source: `scripts/eval/diag_ablation.py`, 3,000 test users.</sub>
 
 **Result.** Removing either learned component collapses the model to
 approximately random. Neither is a distortion to strip out. Both are
@@ -239,6 +250,8 @@ floor. Fixed population, both methods evaluated on the same users.
 | 4 | 0.0122 | 0.0218 | 0.0640 | 0.0773 |
 | **popularity floor** | **0.0125** | **0.0125** | **0.0391** | **0.0391** |
 
+<sub>Source: `scripts/eval/cold_start_eval.py`, 10,000 users (fixed cold-start population).</sub>
+
 Mean-pool beats the tower by roughly 2x at every input level, on Recall@10,
 NDCG@10, and Recall@100. Both improve monotonically with more seed papers. The
 gap stays roughly constant. The tower never catches up.
@@ -340,6 +353,8 @@ measured would be leakage rather than overfitting.
 | 2 | 0.0458 | 0.3205 |
 | 3 | 0.0448 | 0.3212 |
 | 4 | 0.0444 | 0.3214 |
+
+<sub>Source: `results/training_log_hardneg.csv` (per-epoch training log, full train/val splits — not a subsample).</sub>
 
 Train loss falls steadily. Validation is flat to slightly rising after epoch 1.
 Mild divergence: the model stops generalizing further but doesn't visibly
