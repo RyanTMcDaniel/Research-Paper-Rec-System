@@ -21,7 +21,7 @@ import pandas as pd
 import requests
 
 # ---------- CONFIG ----------
-CORPUS_PATH = "data/cleaned_corpus.parquet"
+CORPUS_PATH = "data/training_data/cleaned_corpus.parquet"
 OUTPUT_DIR = "data/citations"
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, "citation_data.jsonl")
 CHECKPOINT_FILE = os.path.join(OUTPUT_DIR, "fetch_checkpoint.json")

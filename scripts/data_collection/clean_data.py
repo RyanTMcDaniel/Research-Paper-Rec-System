@@ -10,11 +10,12 @@ Parquet file for fast loading in later embedding steps.
 
 import json
 import glob
+import os
 import pandas as pd
 from langdetect import detect, LangDetectException
 
 RAW_DIR = "data/raw"
-OUTPUT_PARQUET = "data/cleaned_corpus.parquet"
+OUTPUT_PARQUET = "data/training_data/cleaned_corpus.parquet"
 MIN_ABSTRACT_LENGTH = 20  # characters — guards against junk like "N/A" or single words
 
 
@@ -79,6 +80,7 @@ def main():
     papers = load_all_batches()
     df = clean_papers(papers)
 
+    os.makedirs(os.path.dirname(OUTPUT_PARQUET), exist_ok=True)
     df.to_parquet(OUTPUT_PARQUET, index=False)
     print(f"\nWrote cleaned corpus to {OUTPUT_PARQUET}")
     print(f"Columns: {list(df.columns)}")

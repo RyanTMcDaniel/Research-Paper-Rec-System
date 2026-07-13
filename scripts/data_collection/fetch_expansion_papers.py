@@ -22,7 +22,7 @@ import pandas as pd
 import requests
 
 # ---------- CONFIG ----------
-CORPUS_PATH = "data/cleaned_corpus.parquet"
+CORPUS_PATH = "data/training_data/cleaned_corpus.parquet"
 CITATIONS_PATH = "data/citations/citation_data.jsonl"
 OUTPUT_DIR = "data/raw_expansion"
 CHECKPOINT_FILE = os.path.join(OUTPUT_DIR, "fetch_checkpoint.json")

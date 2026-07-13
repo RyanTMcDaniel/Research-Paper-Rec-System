@@ -55,7 +55,7 @@ import pyarrow.parquet as pq
 from collections import defaultdict
 
 # ---------- CONFIG ----------
-CORPUS_PATH = "data/cleaned_corpus.parquet"
+CORPUS_PATH = "data/training_data/cleaned_corpus.parquet"
 CITATIONS_PATH = "data/citations/citation_data.jsonl"
 OUTPUT_DIR = "data/training_data"
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, "histories.parquet")

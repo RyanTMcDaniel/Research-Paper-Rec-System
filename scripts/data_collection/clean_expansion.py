@@ -21,8 +21,8 @@ from langdetect import detect, LangDetectException
 
 # ---------- CONFIG ----------
 RAW_EXPANSION_DIR = "data/raw_expansion"
-CORPUS_PATH = "data/cleaned_corpus.parquet"
-BACKUP_PATH = "data/cleaned_corpus_pre_expansion.parquet"
+CORPUS_PATH = "data/training_data/cleaned_corpus.parquet"
+BACKUP_PATH = "data/training_data/cleaned_corpus_pre_expansion.parquet"
 
 TARGET_CATEGORIES = {"Computer Science", "Engineering", "Mathematics"}
 MIN_ABSTRACT_LENGTH = 20  # characters

@@ -19,7 +19,7 @@ import pandas as pd
 import requests
 
 # ---------- CONFIG ----------
-CORPUS_PATH = "data/cleaned_corpus.parquet"
+CORPUS_PATH = "data/training_data/cleaned_corpus.parquet"
 CITATIONS_PATH = "data/citations/citation_data.jsonl"
 CHECKPOINT_FILE = "data/citations/fetch_incremental_checkpoint.json"
 
