@@ -337,14 +337,36 @@ Early stopping fired at 4 epochs. The shipped `best.pt` is not the final epoch,
 verified by direct weight comparison against `last.pt` rather than by trusting the
 filename.
 
-**On the loss scale.** The absolute train/val gap is large because of the hard
-negatives, not the overfitting. Discriminating a CS paper from another CS paper is
-a far harder triplet task than discriminating it from a random Medicine paper, so
-the loss scale is not comparable to a random-negative run. The two superseded runs
-in `results/legacy/` are exactly that comparison: same data, same architecture,
-random negatives, and they plateau around val 0.065 — roughly 5x lower. That
-difference is the clearest evidence available that the hard-negative sampler
-changed the objective it was meant to change.
+**On the loss scale.** I originally read the 5x gap between this run's val loss
+(~0.32) and the legacy runs' (~0.065) as evidence that the chain-guarded sampler
+had made the triplet objective harder. The logs contradict that story. The
+train-loss trajectories of all three runs are identical to the third decimal
+(epoch 1: 0.0498 / 0.0497 / 0.0498; epoch 4: 0.0444 / 0.0444 / 0.0443) — a
+sampler that changed the objective would have moved the loss actually being
+optimized, and it didn't. The entire 5x difference lives in validation, which
+points at the validation-negative protocol, not the objective.
+
+Probing the shipped checkpoint against the val split localizes it further. The
+shipped `evaluate_cached` (chain-guarded negatives) yields 0.103 — not the
+logged 0.314 — and on the chain-ordered, unshuffled val loader the guard drops
+60% of rows because whole batches share one chain. Unguarded roll negatives on
+the same weights yield 0.380. The logged 0.314 is consistent with a mostly
+unguarded validation protocol saturated with same-chain false negatives —
+triplets whose "negative" comes from the anchor's own chain, pinning the loss
+near the margin — and inconsistent with the shipped guarded code. Normalizing
+the geometry moves the number by less than 0.002, so geometry is not the
+driver either.
+
+What I cannot do is finish the attribution: the exact code that produced
+either logged validation series is not in this repository (the legacy runs'
+training code and checkpoints are gone), so the residual gap to 0.065 —
+plausibly a shuffled-vs-ordered val loader turning roll negatives from easy
+cross-chain samples into same-chain false negatives — remains a hypothesis,
+stated as one.
+
+None of this touches what the section actually relies on: the within-run
+comparison. Protocol held fixed, train falls while validation rises after
+epoch 1. That is the overfitting signal, and it survives.
 
 **Mitigation.** Early stopping. No regularization sweep.
 
@@ -378,8 +400,11 @@ model I had evaluated.
 I resolved it by forensics rather than by reading a filename:
 
 - The hard-negative run has a val loss around 0.32 against roughly 0.065 for the
-  random-negative runs. Same data, same architecture, 5x separation. The objective
-  changed, so the loss scale changed, and that signature identifies the run.
+  random-negative runs. Same data, same architecture, 5x separation — a
+  fingerprint that identifies which log is which. (The separation turned out to
+  reflect differing validation-negative protocols rather than a changed training
+  objective — see "On the loss scale" — but as an identifying signature it works
+  regardless of its cause.)
 - The hard-negative run stopped at 4 epochs with validation rising after epoch 1,
   so early stopping must have fired and `best.pt` must differ from `last.pt`. The
   random-negative runs ran a full 8 epochs with validation still falling at the

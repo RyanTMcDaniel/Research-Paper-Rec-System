@@ -231,11 +231,11 @@ meaningful. The weakness is in the user tower, not the representations.
 **Popularity-bias audit.** Citation quartiles (edges at 8 / 35 / 105 citations),
 top-10 recommendations across 2,000 test users.
 
-| | Top quartile | Bottom quartile |
-|---|---|---|
-| Corpus baseline | 24.9% | 25.0% |
-| Attention model | 34.8% | 14.3% |
-| Mean-pool | 32.4% | 17.7% |
+| | Q1 (least cited) | Q2 | Q3 | Q4 (most cited) |
+|---|---|---|---|---|
+| Corpus baseline | 25.0% | 25.6% | 24.5% | 24.9% |
+| Attention model | 14.3% | 23.7% | 27.2% | 34.8% |
+| Mean-pool | 17.7% | 23.3% | 26.7% | 32.4% |
 
 Both methods over-surface highly cited papers by a similar margin, so the bias
 originates in the embedding geometry rather than the architecture. Highly cited

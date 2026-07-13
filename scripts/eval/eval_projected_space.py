@@ -1,20 +1,22 @@
 """
-THE TEST: has the model been fine all along, and every eval just searched the
-WRONG SPACE?
+Experiment 4 (ABLATION.md): rule out a space mismatch between user
+fingerprints and the paper index.
 
-The ablation proved the model lives in a PROJECTED coordinate space (drop the
-projection -> score collapses to random). But the FAISS/eval index is built from
-RAW, un-projected paper vectors. So we've been querying a raw-space index with a
-projected-space fingerprint -- a space mismatch, same disease as the norm bug.
+The projection was trained to map user-history vectors TOWARD raw paper
+embeddings -- the positives and negatives in the triplet loss are raw cache
+vectors -- so searching the raw paper index should be correct by
+construction. This script tests the alternative anyway, because "you
+evaluated in the wrong space" is the first objection anyone raises when a
+trained model loses to an average: push every paper vector through the same
+trained projection and search projected-against-projected.
 
-Fix under test: push EVERY paper vector through the trained projection layer too,
-so query and index share the learned geometry. Then re-run the 4-way eval in that
-shared projected space.
+  * projected-space search improves things -> the eval had a space bug and
+    every prior number is suspect.
+  * projected-space search degrades or collapses -> raw-space search was
+    correct all along, and the space-mismatch explanation is eliminated.
 
-  * model NOW beats mean-pool -> the model was never broken; the EVAL was.
-    Every 0.009 -> 0.014 number this week was measured in the wrong space.
-  * model STILL loses -> the projected space genuinely isn't better; the model
-    really is worse than averaging and we stop torturing it.
+Observed result (see ABLATION.md, Experiment 4): projected-space search
+collapsed to 0.0000. Raw-space search was correct.
 
 TORCH ONLY. No faiss. No retraining.
 """

@@ -21,8 +21,7 @@ DESIGN (locked):
 GEOMETRY: model outputs unit-norm fingerprints; paper matrix + centroids unit-
 norm. Every query vector is L2-normalized before topk_by_l2. Non-negotiable.
 
-Categories load from the FLAT paper_categories.parquet (paperId -> list[str]),
-NOT the local corpus's s2FieldsOfStudy (that nested column is null locally).
+Categories load from the FLAT paper_categories.parquet (paperId -> list[str]).
 """
 
 import os

@@ -176,14 +176,14 @@ def fig_training_curves():
 
 # =============================================================================
 # 3. POPULARITY BIAS  (citation-quartile skew)
-#    NOTE: only Q1 and Q4 were recorded in the audit. Q2/Q3 are INFERRED to sum
-#    to 100% (split evenly) and the figure says so. Swap in real values if found.
+#    All four quartiles measured by rerunning popularity_bias.py against the
+#    shipped checkpoint (2,000 test users, quartile edges 8 / 35 / 105).
 # =============================================================================
 def fig_popularity_bias():
     quartiles = ["Q1\n(lowest cited)", "Q2", "Q3", "Q4\n(most cited)"]
-    model    = [14.3, 25.45, 25.45, 34.8]   # Q2/Q3 inferred
-    meanpool = [17.7, 24.95, 24.95, 32.4]   # Q2/Q3 inferred
-    corpus   = [25.0, 25.1,  25.0,  24.9]   # ~flat baseline
+    model    = [14.3, 23.7, 27.2, 34.8]
+    meanpool = [17.7, 23.3, 26.7, 32.4]
+    corpus   = [25.0, 25.6, 24.5, 24.9]   # ~flat baseline
 
     x = np.arange(len(quartiles))
     w = 0.26
@@ -206,7 +206,7 @@ def fig_popularity_bias():
     ax.set_ylim(0, 42)
 
     fig.text(0.5, -0.06,
-             "Q1/Q4 measured; Q2/Q3 inferred to sum to 100%. "
+             "All quartiles measured (popularity_bias.py, shipped checkpoint). "
              "Citation quartile edges: 8 / 35 / 105. 2,000 test users.",
              ha="center", fontsize=8, color="#666666")
     fig.tight_layout()
