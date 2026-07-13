@@ -345,3 +345,7 @@ serve both.
 of the interesting geometric findings here (the 0.9998 centroid, the balanced-
 accuracy gap) are downstream of that imbalance, and describing the corpus as
 broadly scientific would misrepresent both the system and the results.
+
+** Download Kaggle outputs immediately, and name them for the config that produced 
+them. I spent an evening proving by tensor comparison which of my own training runs 
+had produced my own model. This is a solvable problem, and the solution is a filename.
