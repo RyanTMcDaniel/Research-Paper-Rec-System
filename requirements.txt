@@ -9,7 +9,7 @@ requests==2.34.2         # scripts/data_collection/fetch_citations*.py, fetch_*_
 scikit-learn==1.9.0      # scripts/eval/linear_probes.py
 torch==2.12.1            # scripts/eval/*, scripts/models/*, scripts/retrieval/convert_cache_to_npy.py
 tqdm==4.68.4             # scripts/data_collection/build_embedding_cache.py
-transformers==5.13.1     # scripts/data_collection/build_embedding_cache.py, scripts/models/train.py, two_tower.py
+transformers==5.13.1     # scripts/data_collection/build_embedding_cache.py, scripts/models/two_tower.py, scripts/eval/diag_build_768_sample.py, scripts/retrieval/rebuild_matrix_trainedproj.py
 
 # Transitive dependencies of the above (pinned for reproducibility)
 annotated-doc==0.0.4

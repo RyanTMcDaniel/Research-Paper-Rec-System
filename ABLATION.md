@@ -13,6 +13,14 @@ adds variance without adding signal.
 Every more flattering explanation was tested and ruled out. What follows is the
 trail.
 
+**Update (later session).** The headline 0.0140 was measured with the paper tower
+random-init (see [Provenance](#provenance)) — a crippled configuration. Training the
+paper tower changes the number: co-training both towers reaches **0.0315**
+(Experiment 8), the architecture's real ceiling here. The conclusion below is
+unchanged — the model still loses, because mean-pool rises to 0.0410 in that same
+trained space — but where this document implies 0.0140 is *the model's* number, read
+it as the number for *one untrained tower*. Experiments 7–8 close that hole.
+
 **Jump to an experiment:**
 
 1. [Did training actually work?](#experiment-1-did-training-actually-work) — trained vs. random-init
@@ -21,6 +29,8 @@ trail.
 4. [Is the eval searching the wrong space?](#experiment-4-is-the-eval-searching-the-wrong-space) — projected-space retrieval
 5. [**Length-stratified: the gap widens, not narrows**](#experiment-5-length-stratified-evaluation) — the sharpest result
 6. [Does it replicate in cold start?](#experiment-6-does-it-replicate-in-cold-start) — third confirmation
+7. [Is the paper tower the culprit? — train it](#experiment-7-is-the-paper-tower-the-culprit--train-it) — the untrained projection
+8. [**Co-train both towers**](#experiment-8-co-train-both-towers) — the fix the chain implies, and the gap holds
 
 Also: [the category arm](#the-category-arm-and-why-its-reported-separately) · [overfitting](#overfitting) · [artifact-provenance note](#a-note-on-artifact-provenance)
 
@@ -28,19 +38,39 @@ Also: [the category arm](#the-category-arm-and-why-its-reported-separately) · [
 
 ## Provenance
 
-Every number in this document comes from one checkpoint and one training run.
+Most numbers in this document come from one checkpoint and one training run —
+the main benchmark and Experiments 1–6. Experiments 7–8 add two further training
+runs, as flagged in the Update box above: a paper-projection-only run (Exp 7) and
+a co-training run (Exp 8), each with its own checkpoint (noted in those
+experiments). Three training runs in total.
 
 | Artifact | Path |
 |---|---|
-| Evaluated checkpoint | `scripts/models/user_history_encoder_best.pt` |
+| Evaluated checkpoint (Exp 1–6, benchmark) | `scripts/models/user_history_encoder_best.pt` |
 | Its training log | `results/training_log_hardneg.csv` |
+| Exp 7 paper projection | `scripts/models/paper_projection_trained.pt` |
+| Exp 8 co-trained towers | `scripts/models/user_tower_cotrained.pt`, `scripts/models/paper_projection_cotrained.pt` |
 | Experiment scripts | `scripts/eval/` |
 
-That checkpoint is what every script in `scripts/eval/` loads. It came from the
+That checkpoint is what the Experiment 1–6 scripts in `scripts/eval/` load, and
+it remains the query encoder for Experiment 7. Experiment 8's `eval_cotrained.py`
+instead loads the co-trained user tower `user_tower_cotrained.pt`. It came from the
 normalized + chain-guarded-hard-negative run: 4 epochs, early stopping fired.
 `results/legacy/` holds two earlier random-negative runs, which are superseded and
 produced nothing in this document. If you are reading a training curve from one of
 those, you are reading the wrong model.
+
+**What this document originally left unstated: the paper tower was never trained.**
+`paper_matrix.npy` — the 253,703-vector index every experiment here searches — is
+frozen SciBERT under a *random-init* 768→256 projection. The build pipeline saved the
+projected 256-d cache but never loaded trained projection weights, and discarded the
+raw 768-d intermediate; `two_tower.py`'s optimizer is `Adam(history_encoder.parameters())`
+only. So across Experiments 1–6 the "paper embeddings" are a random linear map of
+SciBERT — not raw SciBERT, and not a trained space. This is load-bearing for the
+document's own method: you cannot conclude "the design is what's wrong" while one tower
+is random-init. A later session re-encoded the full corpus to raw 768-d
+(`paper_768_full.npy`, validated by its ≈0.85 mean random-pair cosine — the SciBERT
+anisotropy signature) and ran Experiments 7–8 to close exactly this hole.
 
 The checkpoint is single; the evaluation samples are not. Each script draws its
 own different-sized random subsample of the test set — `evaluate.py` 2,000 users,
@@ -173,7 +203,15 @@ That makes the result a stronger indictment, not a weaker one. If the projection
 had been broken, I'd have a bug and a fix. Instead the learned pipeline is
 internally coherent, every piece doing exactly what it was trained to do, every
 piece necessary to the other, and the coherent whole still loses to an average.
-There is no component to blame. The design is what's wrong.
+Within the user tower, there is no component to blame. But this experiment tested
+only the user side. It never tested the *paper* tower — whose 768→256 projection, the
+Provenance note reveals, was never trained. Experiment 7 trains it and Experiment 8
+co-trains both, and the model more than doubles: a component *was* partly to blame. The
+honest statement is narrower than the one I first wrote here — the design is suboptimal
+at this history length *and* the paper tower was crippled — and Experiment 3 closed the
+component question one tower too early. What survives intact is what this experiment
+actually established: attention and the user-side projection are one jointly-trained
+function, load-bearing on both sides.
 
 ---
 
@@ -183,11 +221,11 @@ There is no component to blame. The design is what's wrong.
 different geometries, so nearest-neighbor retrieval between them is meaningless
 and the score is an artifact of the evaluation rather than the model.
 
-**Script.** `scripts/eval/eval_projected_space.py`. The projection was trained to
-map user-history vectors *toward* raw paper embeddings, so searching the raw
-paper index should be correct by construction. This tests the alternative:
-project the paper index through the same map, then search projected against
-projected.
+**Script.** `scripts/eval/eval_projected_space.py`. The user tower was trained to
+map history vectors *toward* the paper index — which is itself a random 768→256
+projection of SciBERT, not raw SciBERT (see Provenance) — so searching that index
+directly should be correct by construction. This tests the alternative: project the
+paper index through the user tower's map, then search projected against projected.
 
 **Result.** Projecting the paper index produced 0.0000. Not degraded.
 Categorically mismatched. Raw-space search was correct all along.
@@ -197,6 +235,17 @@ Categorically mismatched. Raw-space search was correct all along.
 This one was quick, and it had to be run regardless, because "you evaluated in
 the wrong space" is the first thing anyone asks when a trained model loses to an
 average. Now it's answered with a number instead of an argument.
+
+**Correction (Experiments 7–8).** The blanket reading — "projecting the index is
+categorically mismatched, raw-space was correct all along" — is wrong, and the 0.0000
+says less than it seems. It is the score for projecting through *this* map: an
+*untrained* one. Project the corpus through a *trained* projection and search a
+co-trained user query against it, and retrieval works — **0.0315** (Experiment 8), the
+best model number in this document. So there is no space bug for the shipped model, but
+the deeper claim is the opposite of "eliminated": query–index geometry is a live,
+first-class variable. Experiment 7 shows that moving one tower's space alone *breaks*
+retrieval; Experiment 8 shows co-training both *restores* it. "The eval searches the
+wrong space" was the right question — it just has a richer answer than one number.
 
 ---
 
@@ -272,7 +321,7 @@ or synthetic histories with noise papers deliberately injected. I have neither.
 
 So the honest scope: I did not disprove attention. I disproved attention on this
 data, and the construction of the data is part of why. What survives without
-qualification is everything the six experiments established about *this system* — that
+qualification is everything the eight experiments established about *this system* — that
 training worked, that attention didn't collapse, that the projection isn't broken,
 that the space isn't mismatched, and that the failure gets worse rather than better
 with more input. What doesn't survive is the general sentence. Not "attention loses
@@ -331,6 +380,100 @@ I caught that by increasing n, not by staring at the curve and deciding whether 
 believed it. That's why the note is here. The numbers elsewhere in this document
 survived being re-run at a larger sample, and I don't publish the first structure
 I see.
+
+---
+
+## Experiment 7: is the paper tower the culprit? — train it
+
+The four bug explanations died and Experiment 5 pinned the architecture. But the
+Provenance note surfaces a fifth suspect the original six never tested: the paper
+tower's 768→256 projection was never trained. Every number to this point was measured
+against a *random* linear map of SciBERT. Before "the design is what's wrong" can
+stand, that has to be ruled out — you cannot indict the architecture while one of its
+two towers is random-init.
+
+**Hypothesis.** The model loses because the paper projection is untrained. Train it —
+alone, user tower frozen — and the model should climb.
+
+**Script.** `scripts/models/train_paper_projection.py` trains a fresh
+`nn.Linear(768→256)` on the raw 768-d corpus (`paper_768_full.npy`) against the
+*frozen* trained user tower as anchor, same triplet objective.
+`build_matrix_from_projection.py` rebuilds the index; `eval_trainedproj.py` runs a
+decoupled eval — query built from the original space, index from the new one.
+
+**Result.** The model got *worse*, and mean-pool got *better*.
+
+| Configuration | model R@10 | mean-pool R@10 | gap |
+|---|---|---|---|
+| baseline (random paper proj) | 0.0140 | 0.0225 | −0.0085 |
+| paper-projection-only, frozen user tower | 0.0090 | 0.0300 | −0.0210 |
+
+<sub>Source: `scripts/eval/eval_trainedproj.py`, 2,000 test users (seed 42).</sub>
+
+**Verdict.** Not the fix — but a sharp diagnostic. The trained paper space is genuinely
+better: mean-pool, which lives entirely in the paper space and never routes through the
+user tower, rose from 0.0225 to 0.0300. Yet the model *dropped* to 0.0090, widening the
+gap to −0.0210. The reason is geometry coupling. The frozen user tower was trained to
+emit fingerprints into the *original* random-projection space; re-projecting the papers
+moves the index to a new geometry the user tower was never taught to read. Query and
+index now live in different spaces, and retrieval degrades.
+
+This does two things. It corrects Experiment 3 — a component *was* partly to blame, and
+Exp 3 declared "no component to blame" one tower too early. And it sets up the real
+test: you cannot improve one tower against a space the other doesn't share. Fix that,
+and see what's left.
+
+---
+
+## Experiment 8: co-train both towers
+
+**Hypothesis.** If Experiment 7 failed because the frozen user tower couldn't read a
+re-projected index, then training *both* towers from scratch in one shared geometry
+should remove the misalignment — and let the model finally exploit a trained paper
+space. Maybe enough to beat mean-pool.
+
+**Script.** `scripts/models/train_cotrained.py`: a fresh user tower and a fresh
+`nn.Linear(768→256)`, **525,824 trainable parameters**, one optimizer, trained jointly.
+SciBERT is never instantiated — the tower consumes precomputed 768-d vectors, so BERT
+is frozen by construction. Negatives are **in-batch semi-hard (a FAISS-free
+approximation of full-corpus hard mining)** at batch 512; the random in-batch negatives
+the project started with make the task trivially easy and the training loss
+eval-worthless. Single geometry throughout: the user tower's history input is
+`normalize(proj(history_768))`, the exact transform eval applies, so query and index are
+the same space by construction. `build_cotrained_matrix.py` builds the index;
+`eval_cotrained.py` runs the full 253,703-paper eval on the same 2,000 users.
+
+**Result.**
+
+| Configuration | model R@10 | model NDCG | mean-pool R@10 | mean-pool NDCG | gap |
+|---|---|---|---|---|---|
+| user-tower-only (baseline, random paper proj) | 0.0140 | 0.0074 | 0.0225 | 0.0113 | −0.0085 |
+| paper-projection-only, frozen user tower (Exp 7) | 0.0090 | 0.0047 | 0.0300 | 0.0152 | −0.0210 |
+| **co-trained, both towers (Exp 8)** | **0.0315** | **0.0154** | **0.0410** | **0.0212** | **−0.0095** |
+
+<sub>Source: `scripts/eval/eval_cotrained.py`, 2,000 test users (seed 42), full-index retrieval.</sub>
+
+**Verdict.** Co-training more than doubled the model — Recall@10 0.0140 → 0.0315
+(+125%), NDCG 0.0074 → 0.0154 — and cleanly removed the geometry confound from
+Experiment 7. And it still lost. The same co-trained space that lifted the model lifted
+mean-pool just as much, 0.0225 → 0.0410, so the gap held essentially flat: −0.0085 →
+−0.0095. The model closed the *ratio* to mean-pool from 0.62 to 0.77 but never overtook
+it.
+
+This is the result that closes the chain. It removes the last two confounds at once.
+Query–index misalignment is not the cause: co-training fixed it and the gap didn't move.
+The untrained paper tower is not the cause of the *gap*: training it doubled *both*
+methods, because a better paper space helps the average exactly as much as it helps the
+model. What is left is precisely Experiment 5's finding, now with every representational
+and geometric confound eliminated. At histories of ~4 papers (max 5), there is almost no
+sequential or relational structure for attention to exploit over a mean; mean-pool is
+the correct inductive bias at this length, and the bottleneck is the user-side task, not
+the representation or the geometry.
+
+The scope caveat from Experiment 5 stands and matters more here, not less: this is
+short, homogeneous, co-citation histories. "Co-training doesn't beat mean-pool at
+4-paper histories" is the defensible claim. "Attention never helps recommendation" is
+not, and Experiment 8 is not evidence for it.
 
 ---
 
@@ -508,8 +651,10 @@ regularization sweep and a longer history window, still probably losing to
 mean-pool, and no explanation for any of it. A number I couldn't defend in a room.
 
 What I have instead: a negative result with a mechanism. Attention loses to
-averaging on short, topically homogeneous histories. The four bug explanations are
-ruled out by experiment rather than by assertion. The effect strengthens with
+averaging on short, topically homogeneous histories. Six alternative explanations are
+ruled out by experiment rather than by assertion — the four original bug suspects, plus
+the untrained paper tower (training it doubled the model without closing the gap) and
+query–index geometry misalignment (co-training removed it and the gap held). The effect strengthens with
 sequence length, in the direction that identifies the cause. It reproduces
 independently in cold start, where the model drops below a baseline that ignores
 the user entirely. And the same embedding geometry explains both the popularity

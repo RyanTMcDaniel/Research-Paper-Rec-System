@@ -1,12 +1,18 @@
 # Research Paper Recommender
 
 **A no-parameter baseline beat my trained model, and the investigation into why
-is the deliverable.** I built a two-tower recommender — frozen SciBERT paper
-encoder, self-attention user-history encoder — and a plain mean of the same
+is the deliverable.** I set out to build a two-tower recommender — frozen SciBERT
+paper encoder, self-attention user-history encoder — and a plain mean of the same
 embeddings, with zero learned parameters, out-retrieved it by a wide margin.
-Rather than tune the number up, I ran a six-experiment ablation to prove the
-cause: on short, topically-uniform histories, attention is the wrong inductive
-bias, and it gets *worse* the more history you give it.
+Rather than tune the number up, I ran an eight-experiment ablation, which pinned the
+symptom: on short, topically-uniform histories, attention is the wrong inductive
+bias, and it gets *worse* the more history you give it. Diagnosis then found the
+mechanism underneath it: the paper tower was never trained (its 768→256 projection
+is random-init), so retrieval runs against a frozen, randomly-projected index —
+what I built is effectively one-tower. That symptom-to-mechanism arc is the finding —
+though testing the fix (training the paper tower, then co-training both) more than
+doubled the model yet still lost to mean-pool, pointing at the short-history task
+structure, not the untrained tower alone, as the residual cause (ABLATION.md Exp 7–8).
 
 ## Result: the baseline won
 
@@ -32,7 +38,14 @@ sequence and it would catch up. That prediction is testable: if it were true,
 the gap should **narrow** as histories get longer. It does the opposite. Every
 additional paper makes mean-pool better and the model relatively worse — the
 gap widens. Attention isn't underfed; it's spending signal a plain average
-absorbs cleanly. Full six-experiment trail in **[ABLATION.md](ABLATION.md)**.
+absorbs cleanly. Full trail — now eight experiments — in **[ABLATION.md](ABLATION.md)**.
+That destructiveness is the symptom; the untrained paper tower (below) is part of the
+mechanism, but not all of it. I tested the fix: training the paper tower, then
+co-training both towers in one geometry, raises the model +125% (0.0140 → 0.0315) — yet
+it *still* loses, because the same trained space lifts mean-pool just as much (→ 0.0410).
+So the untrained tower explained the model's low absolute score, not the gap; the
+residual cause is the short-history task structure of Experiment 5. See ABLATION.md
+Experiments 7–8.
 
 ---
 
@@ -43,7 +56,7 @@ flowchart TB
     subgraph P ["Paper tower (frozen)"]
         A["title + abstract"] --> B["SciBERT, frozen"]
         B --> C["mean-pool hidden states"]
-        C --> D["linear 768 → 256"]
+        C --> D["linear 768 → 256<br/>RANDOM INIT · never trained"]
     end
     subgraph U ["User tower (trained)"]
         E["history: 3–5 paper embeddings"] --> F["multi-head self-attention"]
@@ -58,7 +71,9 @@ flowchart TB
 ```
 
 **Paper tower.** Frozen SciBERT (`allenai/scibert_scivocab_uncased`),
-title + abstract, mean-pooled hidden states, linear projection to 256-d.
+title + abstract, mean-pooled hidden states, linear projection to 256-d — but that
+projection was never trained (random-init; see the provenance audit), so in practice
+the tower is frozen SciBERT under a random map.
 
 **User tower.** Sequence of history-paper embeddings, multi-head
 self-attention, masked mean-pool, projection to 256-d.
@@ -72,11 +87,14 @@ every paper in the history is equally predictive of the next one, and
 self-attention is the smallest architectural change that lets the model
 contest that assumption.
 
-The hypothesis was wrong. The six-experiment investigation into why is in
+The hypothesis was wrong. The eight-experiment investigation into why is in
 [ABLATION.md](ABLATION.md).
 
 **Training.** Triplet loss, with in-batch negatives drawn from different
 co-citation chains — same-field in effect, by corpus composition (below).
+Only the user tower was ever optimized: the loop builds
+`Adam(history_encoder.parameters())` and never instantiates `PaperEncoder`, so the
+paper-side 768→256 projection stayed at random initialization throughout.
 
 *Why hard negatives:* with random in-batch negatives the triplet task is
 trivially satisfiable. Telling a user's ML paper apart from a random Medicine
@@ -207,7 +225,7 @@ without measuring the geometry.
 
 ---
 
-## The failure is the user tower, not the embeddings
+## The failure is the untrained index, not the embeddings' content
 
 **Linear probe.** Logistic regression on frozen paper embeddings to predict
 field-of-study: 78.4% raw accuracy, 24.8% balanced accuracy. The gap is the
@@ -215,8 +233,16 @@ finding. The headline number is inflated by class imbalance: 74% of labeled
 papers are CS, and the probe's own majority-class baseline is 74.5%.
 Well-represented fields (Medicine, Physics, Materials Science, Math) separate
 at multiple times chance; tail fields degrade, confounded with data scarcity
-rather than cleanly an embedding failure. Conclusion: the paper embeddings are
-meaningful. The weakness is in the user tower, not the representations.
+rather than cleanly an embedding failure. Conclusion: the paper embeddings carry
+semantic signal — field-of-study separates even under the random projection. But
+usable content is not a well-structured retrieval geometry: the untrained projection
+leaves the index anisotropic, and a user tower that itself did train (it scores far
+above its random-init version, above) still can't beat a flat mean in that space. The
+untrained paper tower is *a* cause of the model's low absolute score — training it
+(ABLATION.md Exp 7–8) more than doubles the model — but it is not the cause of the
+*gap*: co-training both towers lifts mean-pool by the same margin, so the model still
+loses. The residual cause is the short-history task structure, not the semantic content
+and not, on its own, the untrained tower.
 
 **Popularity-bias audit.** Citation quartiles (edges at 8 / 35 / 105 citations),
 top-10 recommendations across 2,000 test users.
@@ -241,24 +267,59 @@ papers dominate recommendations and why a query at the corpus mean (cosine 0.999
 to the CS centroid) returns nothing useful. One property of the space, two
 symptoms, found in two separate investigations.
 
+### Artifact Provenance Audit
+
+- `two_tower_model_best.pt` is an out-of-repo orphan (no repo script produces it). Its
+  `paper_encoder.projection` is statistically indistinguishable from random init (std 0.0208
+  vs fresh 0.0208; only 0.55% of weights outside the init range, max excursion 0.001). Its
+  BERT backbone is bit-identical to pristine SciBERT (max diff 0.000). Its `history_encoder`
+  is from a different run than the one eval uses (differs by up to 5.45). Not used by live eval.
+- Live eval (`evaluate.py`) loads user tower `user_history_encoder_best.pt` and searches corpus
+  `paper_matrix.npy` (253,703×256, frozen SciBERT under a random 768→256 projection).
+- `two_tower.py`'s training loop never instantiates `PaperEncoder`; the optimizer is
+  `Adam(history_encoder.parameters())` only; it saves only `history_encoder.state_dict()`. The
+  paper tower was never trained anywhere.
+- **Conclusion:** the system is effectively a one-tower model — a trained query encoder
+  retrieving against a frozen, randomly-projected index.
+
+### Anisotropy Ablation — Two Independent Problems
+
+Live eval (2,000 users) reproduces at model R@10 0.0140 / NDCG 0.0074, mean-pool 0.0225 /
+0.0113. (The 0.0143 / 0.0210 pair reported elsewhere is the same comparison at 3,000 users
+rather than 2,000 — both are current live figures; see the sample-size note above.) Stripping
+the top-k centered principal components — the identical transform applied to index and queries
+— gives an inverted-U peaking at k=2: mean-pool 0.0225→0.0350 (+56%), model 0.0140→0.0190
+(+36%). The top axis is 8.5% of variance, the top two 15.2%. Past k=2 both decline.
+
+- **Finding A:** anisotropy is a real, removable bottleneck (~⅓–½ of recall).
+- **Finding B:** it does not explain the model's loss to mean-pool — the gap widens after
+  whitening (0.0350 vs 0.0190) and mean-pool leads at every k. At k=1 mean-pool is +40% while
+  the model is flat, meaning the user tower already learned cone-invariance. The deficit traces
+  to the untrained paper tower (see the provenance audit above).
+
 ---
 
 ## Engineering Notes
 
-**~250x training throughput, 62 hr/epoch to 15 min/epoch.**
+**~212x training throughput (191s → 0.9s per 1,000 rows — matched spot-timings on the same ~1,000-row slice, before vs. after caching).**
 The naive training loop was re-tokenizing and re-running full SciBERT forward
 passes for every history paper and every positive, on every row, every epoch.
-I caught it by timing rather than by intuition: 191s per 1,000 rows, which
-extrapolates to roughly 62 hours per epoch on the full split, which is
-mathematically unable to finish inside a Kaggle session. That number is what
-turned "this feels slow" into "this cannot run."
+I caught it by timing rather than by intuition: 191s per 1,000 rows (measured),
+which extrapolates to a full-run projection of very roughly 218 hours per epoch
+over the 4.1M-row train split — mathematically unable to finish inside a Kaggle
+session. That number is what turned "this feels slow" into "this cannot run."
 
 The first hypothesis was dataloader I/O, so I raised `num_workers` and it didn't
 help, which ruled out CPU/GPU overlap and pointed at redundant compute in the
 forward path. Since SciBERT is frozen, a given paper's embedding is identical on
 every epoch and every row it appears in, so the work was pure recomputation.
 Precomputing all 253,703 embeddings once into a `{paperId -> 256-d vector}` cache
-turned the loop into O(1) dict lookups: ~0.9s per 1,000 rows, ~15 min/epoch.
+turned the loop into O(1) dict lookups: ~0.9s per 1,000 rows — a ~212x speedup over
+the naive 191s on that same ~1,000-row spot-timing slice. The full run then completed
+in ~580s (~9.7 min) per epoch over all 4.1M rows, measured from the wall-clock in
+`results/training_log_hardneg.csv`. That full-run rate is faster per row than the
+small-slice spot-timing because fixed setup/warmup cost amortizes away over the full
+run — the two are different measurements, not a cross-check.
 
 Documented constraint: the cache is only valid while SciBERT is frozen.
 Unfreezing for fine-tuning would silently stale it.
@@ -346,8 +407,10 @@ are in [ABLATION.md](ABLATION.md#a-note-on-artifact-provenance).
 ## Repo Structure
 
 **Where to look first.** The result this project is about lives in
-`scripts/eval/`. Each of the six ablation experiments in
-[ABLATION.md](ABLATION.md) maps to one script there, listed below.
+`scripts/eval/`. Each of the eight ablation experiments in
+[ABLATION.md](ABLATION.md) maps to an eval script there, listed below — though
+Experiments 7–8 also depend on training and index-build scripts in
+`scripts/models/` and `scripts/retrieval/`, likewise listed below.
 
 ### `scripts/data_collection/`
 Builds the corpus and the synthetic training data.
@@ -361,7 +424,7 @@ Builds the corpus and the synthetic training data.
 | `fetch_expansion_papers.py` | Find out-of-corpus papers referenced by the corpus, fetch their metadata. This is the 69K → 253K expansion. |
 | `clean_expansion.py` | Same cleaning pipeline as `clean_data.py`, applied to expansion batches, appended to the corpus. |
 | `fetch_citations_incremental.py` | Citation fetch for the expansion delta only. |
-| `build_embedding_cache.py` | **[Kaggle/GPU]** Run frozen SciBERT over all 253K papers once, pickle a `{paperId → 256-d vector}` cache. This is the 250x speedup. |
+| `build_embedding_cache.py` | **[Kaggle/GPU]** Run frozen SciBERT over all 253K papers once, pickle a `{paperId → 256-d vector}` cache. This is the ~212x speedup. |
 | `make_plots.py` | Regenerate the five writeup figures from hardcoded final-run numbers. Loads no data by design; the results are locked. |
 
 ### `scripts/models/`
@@ -369,7 +432,10 @@ Builds the corpus and the synthetic training data.
 | Script | What it does |
 |---|---|
 | `two_tower.py` | **[Kaggle/GPU]** The real training entrypoint. Contains `PaperEncoder`, `UserHistoryEncoder`, the chain-aware `CachedTripletDataset` with chain-guarded negative sampling, and the training loop. Produces `user_history_encoder_best.pt`. |
-| `user_history_encoder_best.pt` | The trained checkpoint every eval script loads. Every number in this repo comes from this file. **Gitignored — not in the repo.** A clone must retrain to obtain it (see Running it & reproducibility). |
+| `train_paper_projection.py` | **Experiment 7.** Trains only a fresh paper projection `nn.Linear(768→256)` on `paper_768_full.npy` against the *frozen* trained user tower (same triplet objective), isolating the paper space as the single changed variable. Produces `paper_projection_trained.pt`. |
+| `train_cotrained.py` | **Experiment 8.** Co-trains a fresh user tower and a fresh `nn.Linear(768→256)` paper projection jointly in one geometry (525,824 params, in-batch semi-hard negatives; SciBERT never instantiated). Produces `user_tower_cotrained.pt` and `paper_projection_cotrained.pt`. |
+| `paper_projection_trained.pt`, `user_tower_cotrained.pt`, `paper_projection_cotrained.pt` | The Exp 7–8 checkpoints produced by the two trainers above. **Gitignored — not in the repo.** |
+| `user_history_encoder_best.pt` | The trained user tower behind the main benchmark, Experiments 1–6, and the query side of Experiment 7. Experiments 7–8 add trained paper-side artifacts: Exp 7 keeps this query encoder but searches `paper_matrix_trainedproj.npy` (built from `paper_projection_trained.pt`); Exp 8 (`eval_cotrained.py`) instead loads the co-trained user tower `user_tower_cotrained.pt` and searches `paper_matrix_cotrained.npy` (built from `paper_projection_cotrained.pt`). **Gitignored — not in the repo.** A clone must retrain to obtain it (see Running it & reproducibility). |
 
 ### `scripts/retrieval/`
 
@@ -378,9 +444,12 @@ Builds the corpus and the synthetic training data.
 | `convert_cache_to_npy.py` | Torch cache dict → `(N, 256)` float32 matrix + aligned paperId array. Runs in a **separate process from FAISS** to avoid the torch/faiss OpenMP collision on Apple Silicon. |
 | `build_faiss_index.py` | Build the flat-L2 index, self-query sanity check, write index + id map. |
 | `centroid_calc.py` | **[Kaggle/GPU]** Per-category mean embedding over `s2FieldsOfStudy`, with a minimum-category-size floor. Produces the centroids `cold_start_eval.py` uses, including the CS centroid that turned out to be cosine 0.9998 to the corpus mean. |
+| `build_matrix_from_projection.py` | **Experiment 7 index.** Applies `paper_projection_trained.pt` to `paper_768_full.npy` → `paper_matrix_trainedproj.npy` (253,703×256, row-aligned to `paper_ids.npy`), stored raw for load-time normalization. |
+| `build_cotrained_matrix.py` | **Experiment 8 index.** Applies `paper_projection_cotrained.pt` to `paper_768_full.npy` → `paper_matrix_cotrained.npy`, so query and index share the co-trained geometry. |
+| `rebuild_matrix_trainedproj.py` | Alternate trained-projection index: re-encodes all 253,703 papers with the trained `paper_encoder.projection` from `two_tower_model_best.pt`, reusing `build_embedding_cache` so only the projection weights differ. |
 
 ### `scripts/eval/`
-The benchmark, plus the six experiments that make up the ablation.
+The benchmark, plus the eight experiments that make up the ablation.
 
 | Script | What it does | ABLATION.md |
 |---|---|---|
@@ -391,9 +460,15 @@ The benchmark, plus the six experiments that make up the ablation.
 | `eval_projected_space.py` | Re-run eval with the paper index pushed through the model's own projection, to test for space mismatch. | Experiment 4 |
 | `eval_by_histlen.py` | Bucket test users by history length, report the model-vs-mean-pool gap per bucket. | Experiment 5 |
 | `cold_start_eval.py` | Seed-paper vs. category-centroid signal at 1–4 inputs, against a popularity floor, on one fixed population. | Experiment 6 |
+| `eval_trainedproj.py` | Train the paper projection alone (user tower frozen), decoupled eval — isolates tower–geometry coupling. | Experiment 7 |
+| `eval_cotrained.py` | Co-train both towers in one geometry, full-index eval — the fix the chain implies. | Experiment 8 |
 | `popularity_bias.py` | Citation-quartile distribution of top-10 recs, model vs. mean-pool vs. corpus baseline. | Interpretability |
 | `linear_probes.py` | Logistic-regression probe predicting field-of-study from frozen paper embeddings. | Interpretability |
 | `space_check.py` | Prints vector norms and NN distances for sample users. This is the script that caught the Voyager bug. | Engineering notes |
+| `diag_build_768_sample.py` | Rebuilds raw 768-d mean-pooled SciBERT vectors (the pre-projection space that was never saved) — the input the geometry diagnostics need. | Provenance / geometry |
+| `diag_space_geometry.py` | Why the category centroids collapse: 768-d vs 256-d centroid spread, SciBERT anisotropy, and the random-projection forensic (does the checkpoint's projection reproduce the cache?). | Provenance / geometry |
+| `diag_dispersion_eval.py` | Dispersion-stratified eval — does the model's deficit shrink as histories get topically more diverse? | Experiment 5 (follow-up) |
+| `diag_contaminated_hist.py` | Contaminated-history eval — inject off-topic papers into homogeneous histories; can attention gate them better than mean-pool? | Experiment 5 (follow-up) |
 
 ### Running notes
 

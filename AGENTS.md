@@ -6,9 +6,14 @@ learned tower, and ABLATION.md documents why. Python + PyTorch.
 
 ## Layout
 - `scripts/data_collection/` — corpus/citation fetching and cleaning pipeline
-- `scripts/models/` — `two_tower.py` (model defs + Kaggle training entrypoint)
-- `scripts/retrieval/` — embedding-cache export and FAISS index build
-- `scripts/eval/` — benchmark and the six ablation experiments
+- `scripts/models/` — `two_tower.py` (model defs + Kaggle training entrypoint),
+  plus the Exp 7–8 trainers `train_paper_projection.py` and `train_cotrained.py`
+- `scripts/retrieval/` — embedding-cache export, FAISS index build, and the Exp 7–8
+  index builders (`build_matrix_from_projection.py`, `build_cotrained_matrix.py`,
+  `rebuild_matrix_trainedproj.py`)
+- `scripts/eval/` — benchmark and the eight ablation experiments, plus supplementary
+  diagnostics (`diag_space_geometry.py`, `diag_build_768_sample.py`,
+  `diag_dispersion_eval.py`, `diag_contaminated_hist.py`)
 - `scripts/tests/` — standalone check scripts (run directly with python; not pytest)
 
 ## Constraints
