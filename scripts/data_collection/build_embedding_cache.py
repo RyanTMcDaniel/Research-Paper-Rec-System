@@ -6,6 +6,40 @@ from transformers import AutoModel, AutoTokenizer
 from scripts.models.two_tower import PaperEncoder  # adjust import path if needed on Kaggle
 
 
+def load_trained_paper_encoder(ckpt_path, model_name, device, output_dim=256):
+    """
+    BUGFIX. The original __main__ built PaperEncoder and encoded the corpus immediately,
+    never calling load_state_dict. PaperEncoder.__init__ creates
+    `self.projection = nn.Linear(768, output_dim)` with RANDOM init, so the whole cache was
+    a random linear map of frozen SciBERT. The trained projection was sitting unused in the
+    two-tower checkpoint the entire time.
+
+    This pulls the `paper_encoder.*` sub-state-dict out of the two-tower checkpoint and
+    loads it, so the projection that encodes the corpus is the one that was actually trained.
+    The BERT backbone is frozen and identical either way; the only thing that changes is the
+    768->256 projection weight/bias.
+    """
+    enc = PaperEncoder(model_name=model_name, output_dim=output_dim)
+
+    full = torch.load(ckpt_path, map_location="cpu")
+    prefix = "paper_encoder."
+    sub = {k[len(prefix):]: v for k, v in full.items() if k.startswith(prefix)}
+    if not sub:
+        raise RuntimeError(f"no '{prefix}*' keys in {ckpt_path}")
+
+    # refuse to encode with a random projection -- that is the bug this function exists to fix
+    assert "projection.weight" in sub and "projection.bias" in sub, \
+        "checkpoint has no trained projection -- refusing to encode with a random one"
+    enc.load_state_dict(sub, strict=True)   # strict: raises rather than silently half-loading
+    print(f"loaded trained paper_encoder from {ckpt_path} "
+          f"({len(sub)} tensors, projection {tuple(sub['projection.weight'].shape)})")
+
+    enc.to(device).eval()
+    for p in enc.parameters():
+        p.requires_grad = False
+    return enc
+
+
 def build_embedding_cache(corpus_path, paper_encoder, tokenizer, device, batch_size=64):
     """
     Precompute embeddings for every unique paper in the corpus once.
@@ -51,6 +85,7 @@ if __name__ == "__main__":
     FULL_CORPUS_PATH = "/kaggle/input/your-dataset-name/cleaned_corpus.parquet"  # fix this path on Kaggle
     MODEL_NAME = "allenai/scibert_scivocab_uncased"
     BATCH_SIZE = 64
+    CKPT_PATH = "two_tower_model_best.pt"   # REQUIRED: holds the trained paper_encoder.projection
 
     # Flip this to False once the test slice run looks clean
     TEST_MODE = True
@@ -72,11 +107,10 @@ if __name__ == "__main__":
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
-    paper_encoder = PaperEncoder(model_name=MODEL_NAME, output_dim=256).to(device)
-
-    # Freeze backbone — caching is only valid while SciBERT is frozen
-    for param in paper_encoder.bert.parameters():
-        param.requires_grad = False
+    # BUGFIX: was `PaperEncoder(...)` with no load_state_dict, i.e. a random 768->256
+    # projection. Load the TRAINED paper_encoder weights instead. Backbone is frozen either
+    # way; tokenization and pooling below are unchanged.
+    paper_encoder = load_trained_paper_encoder(CKPT_PATH, MODEL_NAME, device, output_dim=256)
 
     start_time = time.time()
     cache = build_embedding_cache(CORPUS_PATH, paper_encoder, tokenizer, device, batch_size=BATCH_SIZE)
